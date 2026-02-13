@@ -1,0 +1,441 @@
+name: 🖥️ REMOTE DESKTOP SERVICES
+
+on: 
+  workflow_dispatch:
+    inputs:
+      os_version:
+        description: '📀 Select Operating System'
+        required: true
+        default: 'Windows Server 2025 (Native - 4vCPU | 16GB RAM)'
+        type: choice
+        options: 
+          - "Windows Server 2025 (Native - 4vCPU | 16GB RAM)"
+          - "Windows Server 2025 (Docker - 4vCPU | 8GB RAM)"
+          - "Windows Server 2022 (Docker - 4vCPU | 8GB RAM)"
+          - "Windows Server 2019 (Docker - 4vCPU | 8GB RAM)"
+          - "Windows Server 2012 (Docker - 4vCPU | 8GB RAM)"
+          - "Windows 11 Professional (Docker - 4vCPU | 8GB RAM)"
+          - "Windows 10 Professional (Docker - 4vCPU | 8GB RAM)"
+          - "Ubuntu 24.04 Desktop RDP (Native - 4vCPU | 16GB RAM)"
+
+jobs:
+  # ==================== JOB 1: WINDOWS SERVER 2025 NATIVE ====================
+  windows-server-2025-native:
+    if: github.event.inputs.os_version == 'Windows Server 2025 (Native - 4vCPU | 16GB RAM)'
+    runs-on: windows-latest
+    timeout-minutes: 360
+    
+    steps:
+      - name: 🔧 Initializing Windows Server 2025 (Native)
+        run: |
+          $ErrorActionPreference = 'SilentlyContinue'
+          
+          # Create Administrator Account
+          net user Admin Window@123456 /add /expires:never /passwordchg:no > $null 2>&1
+          net localgroup Administrators Admin /add > $null 2>&1
+          net localgroup "Remote Desktop Users" Admin /add > $null 2>&1
+          
+          # Configure RDP Service
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+          netsh advfirewall firewall set rule group="remote desktop" new enable=Yes > $null 2>&1
+          
+          Write-Host "✅ RDP configured successfully" -ForegroundColor Green
+
+      - name: 🌐 Starting Kami Tunnel
+        run: |
+          # Download Kami Tunnel
+          Invoke-WebRequest -Uri "https://github.com/kami2k1/tunnel/releases/latest/download/kami-tunnel-windows-amd64.tar.gz" -OutFile "kami-tunnel.tar.gz"
+          tar -xzf kami-tunnel.tar.gz
+          
+          # Start tunnel in background and redirect output
+          Start-Process -FilePath ".\kami-tunnel.exe" -ArgumentList "3389" -NoNewWindow -RedirectStandardOutput "tunnel.log"
+          
+          Write-Host "🚀 Kami Tunnel started" -ForegroundColor Cyan
+
+      - name: 🎉 Connection Information - Windows Server 2025
+        run: |
+          Write-Host "`n⏳ Waiting for public IP address..." -ForegroundColor Yellow
+          
+          $maxRetries = 60
+          $retryCount = 0
+          $ip = ""
+          
+          while ([string]::IsNullOrWhiteSpace($ip) -and $retryCount -lt $maxRetries) {
+              Start-Sleep -Seconds 2
+              $retryCount++
+              
+              # Try reading from kami_tunnel.txt
+              if (Test-Path "kami_tunnel.txt") {
+                  $content = Get-Content "kami_tunnel.txt" -Raw -ErrorAction SilentlyContinue
+                  if ($content -match '(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+)') {
+                      $ip = $matches[1]
+                  }
+              }
+              
+              # Also try from tunnel.log
+              if ([string]::IsNullOrWhiteSpace($ip) -and (Test-Path "tunnel.log")) {
+                  $logContent = Get-Content "tunnel.log" -Raw -ErrorAction SilentlyContinue
+                  if ($logContent -match '(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+)') {
+                      $ip = $matches[1]
+                  }
+              }
+              
+              if (-not [string]::IsNullOrWhiteSpace($ip)) {
+                  break
+              }
+              
+              if ($retryCount % 10 -eq 0) {
+                  Write-Host "⏳ Still waiting... ($retryCount/$maxRetries)" -ForegroundColor Yellow
+              }
+          }
+          
+          if ([string]::IsNullOrWhiteSpace($ip)) {
+              Write-Host "`n❌ ERROR: Could not retrieve public IP address" -ForegroundColor Red
+              Write-Host "Please check the tunnel logs or try running the workflow again." -ForegroundColor Red
+              exit 1
+          }
+          
+          Write-Host "`n╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+          Write-Host "║      ✅ WINDOWS SERVER 2025 - READY FOR CONNECTION        ║" -ForegroundColor Green
+          Write-Host "╠════════════════════════════════════════════════════════════╣" -ForegroundColor White
+          Write-Host "║ 🌐  Public IP   : $ip" -ForegroundColor Yellow
+          Write-Host "║ 👤  Username    : Admin" -ForegroundColor White
+          Write-Host "║ 🔐  Password    : Window@123456" -ForegroundColor White
+          Write-Host "║ 📍  RDP Port    : 3389" -ForegroundColor White
+          Write-Host "║ 💻  Resources   : 4 vCPU | 16GB RAM" -ForegroundColor Cyan
+          Write-Host "╚════════════════════════════════════════════════════════════╝`n" -ForegroundColor Green
+          
+          Write-Host "🔗 RDP Command: mstsc /v:$ip" -ForegroundColor Magenta
+
+      - name: ⏰ Maintaining Active Session
+        run: |
+          $endTime = (Get-Date).AddMinutes(340)
+          $updateInterval = 30
+          $lastUpdate = Get-Date
+          
+          while ((Get-Date) -lt $endTime) {
+              $left = $endTime - (Get-Date)
+              $now = Get-Date
+              
+              if (($now - $lastUpdate).TotalSeconds -ge $updateInterval) {
+                  Write-Host "🟢 [$($now.ToString('HH:mm:ss'))] Windows Server 2025 Active | Time Left: $($left.ToString('hh\:mm\:ss'))" -ForegroundColor Green
+                  $lastUpdate = $now
+              }
+              
+              Start-Sleep -Seconds 10
+          }
+          
+          Write-Host "`n⏹️ Session timeout reached. Workflow ending." -ForegroundColor Yellow
+
+  # ==================== JOB 2: WINDOWS WITH DOCKER ====================
+  windows-docker:
+    if: |
+      github.event.inputs.os_version != 'Windows Server 2025 (Native - 4vCPU | 16GB RAM)' &&
+      github.event.inputs.os_version != 'Ubuntu 24.04 Desktop RDP (Native - 4vCPU | 16GB RAM)'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    
+    steps:
+      - name: 🔧 Initializing Windows System
+        run: |
+          echo "🔧 Setting up Docker environment..."
+          sudo apt-get update -qq > /dev/null 2>&1
+          
+          SELECTED_OS="${{ github.event.inputs.os_version }}"
+          
+          # Determine Windows Version
+          if [[ "$SELECTED_OS" == *"2025"* ]]; then
+            VERSION="2025"
+            OS_NAME="Windows Server 2025"
+          elif [[ "$SELECTED_OS" == *"2022"* ]]; then
+            VERSION="2022"
+            OS_NAME="Windows Server 2022"
+          elif [[ "$SELECTED_OS" == *"2019"* ]]; then
+            VERSION="2019"
+            OS_NAME="Windows Server 2019"
+          elif [[ "$SELECTED_OS" == *"2012"* ]]; then
+            VERSION="2012"
+            OS_NAME="Windows Server 2012"
+          elif [[ "$SELECTED_OS" == *"11"* ]]; then
+            VERSION="11"
+            OS_NAME="Windows 11 Professional"
+          elif [[ "$SELECTED_OS" == *"10"* ]]; then
+            VERSION="10"
+            OS_NAME="Windows 10 Professional"
+          fi
+          
+          echo "📦 Starting $OS_NAME container..."
+          
+          # Create Docker Compose Configuration with Port 8006 for Web Viewer
+          cat <<EOF > docker-compose.yml
+          version: "3.9"
+          services:
+            windows:
+              image: dockurr/windows
+              container_name: windows_rdp
+              privileged: true
+              environment:
+                VERSION: "$VERSION"
+                USERNAME: "Admin"
+                PASSWORD: "Window@123456"
+                RAM_SIZE: "8G"
+                CPU_CORES: "4"
+                DISK_SIZE: "60G"
+              devices: [ "/dev/kvm" ]
+              ports:
+                - "3389:3389"
+                - "8006:8006"
+          EOF
+          
+          docker compose up -d
+          
+          echo "OS_NAME=$OS_NAME" >> $GITHUB_ENV
+          echo "✅ Docker container started successfully"
+
+      - name: 🌐 Starting Kami Tunnel
+        run: |
+          echo "📥 Downloading Kami Tunnel..."
+          wget -q https://github.com/kami2k1/tunnel/releases/latest/download/kami-tunnel-linux-amd64.tar.gz
+          tar -xzf kami-tunnel-linux-amd64.tar.gz
+          chmod +x kami-tunnel
+          
+          echo "🚀 Starting tunnels..."
+          
+          # Start RDP tunnel (port 3389)
+          ./kami-tunnel 3389 > tunnel_rdp.log 2>&1 &
+          RDP_PID=$!
+          
+          # Wait a bit before starting second tunnel
+          sleep 3
+          
+          # Start Web Viewer tunnel (port 8006)
+          ./kami-tunnel 8006 > tunnel_web.log 2>&1 &
+          WEB_PID=$!
+          
+          echo "RDP_PID=$RDP_PID" >> $GITHUB_ENV
+          echo "WEB_PID=$WEB_PID" >> $GITHUB_ENV
+          echo "✅ Tunnels started (RDP: $RDP_PID, Web: $WEB_PID)"
+
+      - name: 🎉 Connection Information - Windows System
+        run: |
+          echo ""
+          echo "⏳ Waiting for tunnel connections..."
+          
+          # Function to extract IP from file or log
+          get_ip() {
+            local file=$1
+            local max_wait=$2
+            local count=0
+            
+            while [ $count -lt $max_wait ]; do
+              if [ -f "$file" ]; then
+                # Try to extract IP:PORT pattern
+                IP=$(grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+' "$file" | head -1)
+                if [ ! -z "$IP" ]; then
+                  echo "$IP"
+                  return 0
+                fi
+              fi
+              sleep 2
+              count=$((count + 1))
+            done
+            
+            return 1
+          }
+          
+          # Get RDP IP (wait up to 60 seconds)
+          echo "🔍 Retrieving RDP IP address..."
+          RDP_IP=$(get_ip "kami_tunnel.txt" 30)
+          if [ -z "$RDP_IP" ]; then
+            RDP_IP=$(get_ip "tunnel_rdp.log" 30)
+          fi
+          
+          if [ -z "$RDP_IP" ]; then
+            echo "❌ ERROR: Could not retrieve RDP IP address"
+            echo "Tunnel logs:"
+            echo "--- kami_tunnel.txt ---"
+            cat kami_tunnel.txt 2>/dev/null || echo "File not found"
+            echo "--- tunnel_rdp.log ---"
+            cat tunnel_rdp.log 2>/dev/null || echo "File not found"
+            exit 1
+          fi
+          
+          # Get Web Viewer IP (optional, don't fail if not available)
+          echo "🔍 Retrieving Web Viewer IP address..."
+          WEB_IP=$(get_ip "tunnel_web.log" 15)
+          
+          # If web IP not found, construct from RDP IP
+          if [ -z "$WEB_IP" ]; then
+            BASE_IP=$(echo $RDP_IP | cut -d: -f1)
+            WEB_IP="${BASE_IP}:8006"
+          fi
+          
+          echo ""
+          echo "╔════════════════════════════════════════════════════════════╗"
+          echo "║         ✅ $OS_NAME - READY FOR CONNECTION         ║"
+          echo "╠════════════════════════════════════════════════════════════╣"
+          echo "║ 🌐  RDP IP      : $RDP_IP"
+          echo "║ 🖥️  Web Viewer  : http://$WEB_IP"
+          echo "║ 👤  Username    : Admin"
+          echo "║ 🔐  Password    : Window@123456"
+          echo "║ 📍  RDP Port    : 3389"
+          echo "║ 🌍  Web Port    : 8006 (Installation Progress)"
+          echo "║ 💻  Resources   : 4 vCPU | 8GB RAM"
+          echo "╚════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "💡 Tip: Access Web Viewer to monitor Windows installation!"
+          echo "🔗 RDP Command: xfreerdp /u:Admin /p:Window@123456 /v:$RDP_IP /cert:ignore"
+          echo ""
+          
+          echo "KAMI_IP=$RDP_IP" >> $GITHUB_ENV
+          echo "WEB_IP=$WEB_IP" >> $GITHUB_ENV
+
+      - name: ⏰ Maintaining Active Session
+        run: |
+          END_TIME=$(($(date +%s) + 21600))  # 6 hours from now
+          UPDATE_INTERVAL=300  # 5 minutes
+          
+          while [ $(date +%s) -lt $END_TIME ]; do
+            CURRENT=$(date +%s)
+            REMAINING=$((END_TIME - CURRENT))
+            HOURS=$((REMAINING / 3600))
+            MINUTES=$(((REMAINING % 3600) / 60))
+            
+            echo "🟢 [$(date '+%H:%M:%S')] $OS_NAME Active | RDP: $KAMI_IP | Web: http://$WEB_IP | Time Left: ${HOURS}h ${MINUTES}m"
+            
+            # Check if docker container is still running
+            if ! docker ps | grep -q windows_rdp; then
+              echo "⚠️  WARNING: Docker container stopped unexpectedly"
+              echo "Attempting to restart..."
+              docker start windows_rdp
+            fi
+            
+            sleep $UPDATE_INTERVAL
+          done
+          
+          echo ""
+          echo "⏹️  Session timeout reached. Cleaning up..."
+
+  # ==================== JOB 3: UBUNTU DESKTOP RDP NATIVE ====================
+  ubuntu-desktop-rdp:
+    if: github.event.inputs.os_version == 'Ubuntu 24.04 Desktop RDP (Native - 4vCPU | 16GB RAM)'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    
+    steps:
+      - name: 🔧 Initializing Ubuntu Desktop with RDP
+        run: |
+          echo "🔧 Updating system packages..."
+          sudo apt-get update -qq > /dev/null 2>&1
+          
+          echo "📦 Installing XFCE Desktop Environment..."
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            xfce4 xfce4-goodies xorg dbus-x11 x11-xserver-utils > /dev/null 2>&1
+          
+          echo "📦 Installing XRDP Server..."
+          sudo apt-get install -y -qq xrdp > /dev/null 2>&1
+          
+          echo "⚙️  Configuring XRDP..."
+          sudo systemctl enable xrdp > /dev/null 2>&1
+          echo "xfce4-session" | tee ~/.xsession > /dev/null
+          sudo systemctl restart xrdp
+          
+          echo "👤 Creating Admin user..."
+          sudo useradd -m -s /bin/bash Admin
+          echo "Admin:Ubuntu@123456" | sudo chpasswd
+          sudo usermod -aG sudo Admin
+          
+          sudo -u Admin bash -c "echo 'xfce4-session' > /home/Admin/.xsession"
+          
+          echo "✅ Ubuntu Desktop RDP configured successfully"
+
+      - name: 🌐 Starting Kami Tunnel
+        run: |
+          echo "📥 Downloading Kami Tunnel..."
+          wget -q https://github.com/kami2k1/tunnel/releases/latest/download/kami-tunnel-linux-amd64.tar.gz
+          tar -xzf kami-tunnel-linux-amd64.tar.gz
+          chmod +x kami-tunnel
+          
+          echo "🚀 Starting tunnel..."
+          ./kami-tunnel 3389 > tunnel.log 2>&1 &
+          TUNNEL_PID=$!
+          echo "TUNNEL_PID=$TUNNEL_PID" >> $GITHUB_ENV
+          echo "✅ Tunnel started (PID: $TUNNEL_PID)"
+
+      - name: 🎉 Connection Information - Ubuntu Desktop RDP
+        run: |
+          echo ""
+          echo "⏳ Waiting for public IP address..."
+          
+          MAX_RETRIES=60
+          RETRY_COUNT=0
+          RDP_IP=""
+          
+          while [ -z "$RDP_IP" ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            sleep 2
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            
+            if [ -f "kami_tunnel.txt" ]; then
+              RDP_IP=$(grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+' kami_tunnel.txt | head -1)
+            fi
+            
+            if [ -z "$RDP_IP" ] && [ -f "tunnel.log" ]; then
+              RDP_IP=$(grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+' tunnel.log | head -1)
+            fi
+            
+            if [ $((RETRY_COUNT % 10)) -eq 0 ]; then
+              echo "⏳ Still waiting... ($RETRY_COUNT/$MAX_RETRIES)"
+            fi
+          done
+          
+          if [ -z "$RDP_IP" ]; then
+            echo "❌ ERROR: Could not retrieve public IP address"
+            echo "Tunnel logs:"
+            cat tunnel.log 2>/dev/null || echo "Log file not found"
+            exit 1
+          fi
+          
+          echo ""
+          echo "╔════════════════════════════════════════════════════════════╗"
+          echo "║    ✅ UBUNTU 24.04 DESKTOP RDP - READY FOR CONNECTION     ║"
+          echo "╠════════════════════════════════════════════════════════════╣"
+          echo "║ 🌐  Public IP   : $RDP_IP"
+          echo "║ 👤  Username    : Admin"
+          echo "║ 🔐  Password    : Ubuntu@123456"
+          echo "║ 📍  RDP Port    : 3389"
+          echo "║ 💻  Resources   : 4 vCPU | 16GB RAM"
+          echo "║ 🖥️  Desktop     : XFCE4"
+          echo "╚════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "🔗 RDP Command: xfreerdp /u:Admin /p:Ubuntu@123456 /v:$RDP_IP /cert:ignore"
+          echo ""
+          
+          echo "KAMI_IP=$RDP_IP" >> $GITHUB_ENV
+
+      - name: ⏰ Maintaining Active Session
+        run: |
+          END_TIME=$(($(date +%s) + 21600))
+          UPDATE_INTERVAL=300
+          
+          while [ $(date +%s) -lt $END_TIME ]; do
+            CURRENT=$(date +%s)
+            REMAINING=$((END_TIME - CURRENT))
+            HOURS=$((REMAINING / 3600))
+            MINUTES=$(((REMAINING % 3600) / 60))
+            
+            echo "🟢 [$(date '+%H:%M:%S')] Ubuntu 24.04 Desktop RDP Active | IP: $KAMI_IP | Time Left: ${HOURS}h ${MINUTES}m"
+            
+            # Check XRDP service status
+            if ! sudo systemctl is-active --quiet xrdp; then
+              echo "⚠️  WARNING: XRDP service stopped"
+              echo "Restarting XRDP..."
+              sudo systemctl restart xrdp
+            fi
+            
+            sleep $UPDATE_INTERVAL
+          done
+          
+          echo ""
+          echo "⏹️  Session timeout reached. Workflow ending."
